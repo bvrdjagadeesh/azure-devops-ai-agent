@@ -1,0 +1,367 @@
+@page "/configure"
+@page "/"
+@using AzureDevOpsAgentWeb.Services
+@using Microsoft.AspNetCore.Components.Web
+@inject ConfigurationStateService ConfigService
+@inject NavigationManager Navigation
+@rendermode RenderMode.InteractiveServer
+
+<PageTitle>Configure - Azure DevOps Agent</PageTitle>
+
+<div class="configure-container">
+    <div class="configure-card">
+        <div class="configure-header">
+            <h1>Configure Azure DevOps Agent</h1>
+            <p>Enter your Azure DevOps settings to get started</p>
+        </div>
+
+        @if (!ConfigService.IsOpenAIConfigured)
+        {
+            <div class="error-banner">
+                <p>Azure OpenAI is not configured. Please check appsettings.json</p>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="error-banner">
+                <p>@errorMessage</p>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(successMessage))
+        {
+            <div class="success-banner">
+                <p>@successMessage</p>
+            </div>
+        }
+
+        <form @onsubmit="SaveConfiguration" class="configure-form">
+            <div class="form-section">
+                <h2>Azure DevOps Settings</h2>
+                
+                <div class="form-group">
+                    <label for="orgUrl">Organization URL *</label>
+                    <input type="text" id="orgUrl" @bind="organizationUrl" 
+                           placeholder="https://dev.azure.com/your-organization" />
+                    <span class="help-text">Your Azure DevOps organization URL</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="pat">Personal Access Token *</label>
+                    <input type="password" id="pat" @bind="personalAccessToken" 
+                           placeholder="Enter your PAT" />
+                    <span class="help-text">
+                        <a href="https://dev.azure.com/_usersSettings/tokens" target="_blank">Create a PAT</a> 
+                        with Work Items (Read and Write) permission
+                    </span>
+                </div>
+
+                <div class="form-group">
+                    <label for="project">Project Name *</label>
+                    <input type="text" id="project" @bind="projectName" 
+                           placeholder="Your project name" />
+                </div>
+
+                <div class="form-group">
+                    <label for="team">Team Name (optional)</label>
+                    <input type="text" id="team" @bind="teamName" 
+                           placeholder="Your team name" />
+                    <span class="help-text">Leave empty to use default team</span>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-primary" disabled="@(isValidating || !ConfigService.IsOpenAIConfigured)">
+                    @if (isValidating)
+                    {
+                        <span>Validating...</span>
+                    }
+                    else
+                    {
+                        <span>Save and Continue</span>
+                    }
+                </button>
+
+                @if (ConfigService.IsConfigured)
+                {
+                    <button type="button" class="btn-secondary" @onclick="GoToChat">
+                        Go to Chat
+                    </button>
+                }
+            </div>
+        </form>
+
+        <div class="info-section">
+            <h3>How to get these values:</h3>
+            <ul>
+                <li><strong>Organization URL:</strong> Found at dev.azure.com/[your-org]</li>
+                <li><strong>PAT:</strong> Create at dev.azure.com/_usersSettings/tokens</li>
+                <li><strong>Project Name:</strong> The name of your Azure DevOps project</li>
+                <li><strong>Team Name:</strong> Found in Project Settings - Teams</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<style>
+    .configure-container {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .configure-card {
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        max-width: 600px;
+        width: 100%;
+        padding: 40px;
+    }
+
+    .configure-header {
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .configure-header h1 {
+        color: #333;
+        margin-bottom: 10px;
+    }
+
+    .configure-header p {
+        color: #666;
+    }
+
+    .form-section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 12px;
+    }
+
+    .form-section h2 {
+        font-size: 1.1rem;
+        color: #333;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e9ecef;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .form-group input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-group input:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .help-text {
+        display: block;
+        margin-top: 6px;
+        font-size: 12px;
+        color: #666;
+    }
+
+    .help-text a {
+        color: #667eea;
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 15px;
+        justify-content: center;
+        margin-top: 30px;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 14px 32px;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-primary:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+    }
+
+    .btn-secondary {
+        background: white;
+        color: #667eea;
+        border: 2px solid #667eea;
+        padding: 12px 28px;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .btn-secondary:hover {
+        background: #667eea;
+        color: white;
+    }
+
+    .error-banner {
+        background: #fee;
+        color: #c00;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border-left: 4px solid #c00;
+    }
+
+    .success-banner {
+        background: #efe;
+        color: #060;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border-left: 4px solid #060;
+    }
+
+    .info-section {
+        margin-top: 30px;
+        padding: 20px;
+        background: #e3f2fd;
+        border-radius: 12px;
+    }
+
+    .info-section h3 {
+        color: #1565c0;
+        margin-bottom: 15px;
+        font-size: 1rem;
+    }
+
+    .info-section ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+
+    .info-section li {
+        margin: 8px 0;
+        font-size: 13px;
+        color: #333;
+    }
+</style>
+
+@code {
+    private string organizationUrl = "";
+    private string personalAccessToken = "";
+    private string projectName = "";
+    private string teamName = "";
+
+    private string? errorMessage;
+    private string? successMessage;
+    private bool isValidating = false;
+
+    protected override void OnInitialized()
+    {
+        // Pre-fill with existing configuration if available
+        var config = ConfigService.Configuration;
+        organizationUrl = config.OrganizationUrl ?? "";
+        personalAccessToken = config.PersonalAccessToken ?? "";
+        projectName = config.ProjectName ?? "";
+        teamName = config.TeamName ?? "";
+    }
+
+    private async Task SaveConfiguration()
+    {
+        errorMessage = null;
+        successMessage = null;
+
+        // Validate required fields
+        if (string.IsNullOrWhiteSpace(organizationUrl))
+        {
+            errorMessage = "Organization URL is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(personalAccessToken))
+        {
+            errorMessage = "Personal Access Token is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(projectName))
+        {
+            errorMessage = "Project Name is required.";
+            return;
+        }
+
+        isValidating = true;
+        StateHasChanged();
+
+        try
+        {
+            // Validate Azure DevOps connection
+            var testService = new AzureDevOpsService(
+                organizationUrl.Trim(),
+                personalAccessToken.Trim(),
+                projectName.Trim(),
+                string.IsNullOrWhiteSpace(teamName) ? null : teamName.Trim());
+
+            await testService.GetSprintInfoAsync();
+
+            // Save configuration
+            ConfigService.UpdateConfiguration(
+                organizationUrl.Trim(),
+                personalAccessToken.Trim(),
+                projectName.Trim(),
+                string.IsNullOrWhiteSpace(teamName) ? null : teamName.Trim());
+
+            successMessage = "Configuration saved successfully! Redirecting to chat...";
+            StateHasChanged();
+
+            await Task.Delay(1500);
+            Navigation.NavigateTo("/chat");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Connection failed: {ex.Message}. Please check your settings.";
+        }
+        finally
+        {
+            isValidating = false;
+            StateHasChanged();
+        }
+    }
+
+    private void GoToChat()
+    {
+        Navigation.NavigateTo("/chat");
+    }
+}

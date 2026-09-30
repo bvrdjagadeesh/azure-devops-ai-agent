@@ -1,0 +1,176 @@
+@page "/sprint"
+@using AzureDevOpsAgentWeb.Services
+@using Microsoft.AspNetCore.Components.Web
+@inject ConfigurationStateService ConfigService
+@inject NavigationManager Navigation
+@rendermode RenderMode.InteractiveServer
+
+<PageTitle>Sprint Board</PageTitle>
+
+@if (!ConfigService.IsConfigured)
+{
+    <div class="not-configured">
+        <div class="not-configured-content">
+            <h2>Configuration Required</h2>
+            <p>Please configure your Azure DevOps settings first.</p>
+            <button class="btn-primary" @onclick="GoToConfigure">Configure Settings</button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="sprint-container">
+        <div class="sprint-header">
+            <h1>Sprint Board</h1>
+            <button class="btn-refresh" @onclick="LoadData" disabled="@isLoading">
+                @(isLoading ? "Loading..." : "Refresh")
+            </button>
+        </div>
+
+        @if (errorMessage != null)
+        {
+            <div class="error-banner">
+                <p>@errorMessage</p>
+            </div>
+        }
+
+        @if (sprintInfo != null)
+        {
+            <div class="sprint-info-card">
+                <h2>@sprintInfo.Name</h2>
+                <div class="sprint-dates">
+                    <div class="date-item">
+                        <span class="date-label">Start</span>
+                        <span class="date-value">@(sprintInfo.StartDate?.ToString("MMM dd, yyyy") ?? "N/A")</span>
+                    </div>
+                    <div class="date-item">
+                        <span class="date-label">End</span>
+                        <span class="date-value">@(sprintInfo.FinishDate?.ToString("MMM dd, yyyy") ?? "N/A")</span>
+                    </div>
+                    <div class="date-item highlight">
+                        <span class="date-label">Days Left</span>
+                        <span class="date-value">@sprintInfo.DaysRemaining</span>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @CalculateProgress()%"></div>
+                </div>
+            </div>
+        }
+
+        <div class="board-columns">
+            @foreach (var state in states)
+            {
+                var stateItems = workItems.Where(w => w.State.Equals(state, StringComparison.OrdinalIgnoreCase)).ToList();
+                <div class="board-column">
+                    <div class="column-header">
+                        <h3>@state</h3>
+                        <span class="item-count">@stateItems.Count</span>
+                    </div>
+                    <div class="column-items">
+                        @foreach (var item in stateItems)
+                        {
+                            <div class="work-item-card @GetWorkItemClass(item.WorkItemType)">
+                                <div class="card-type">@item.WorkItemType</div>
+                                <div class="card-id">#@item.Id</div>
+                                <div class="card-title">@item.Title</div>
+                                <div class="card-footer">
+                                    <span class="card-assignee">@(item.AssignedTo ?? "Unassigned")</span>
+                                </div>
+                            </div>
+                        }
+                        @if (!stateItems.Any())
+                        {
+                            <div class="empty-column">No items</div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private SprintInfo? sprintInfo;
+    private List<WorkItemInfo> workItems = new();
+    private bool isLoading = true;
+    private string? errorMessage;
+    private string[] states = { "New", "Active", "Resolved", "Closed" };
+
+    private AzureDevOpsService? DevOpsService => ConfigService.GetDevOpsService();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ConfigService.IsConfigured)
+        {
+            await LoadData();
+        }
+    }
+
+    private void GoToConfigure()
+    {
+        Navigation.NavigateTo("/configure");
+    }
+
+    private async Task LoadData()
+    {
+        if (DevOpsService == null) return;
+
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            sprintInfo = await DevOpsService.GetSprintInfoAsync();
+            workItems = await DevOpsService.GetCurrentSprintWorkItemsAsync();
+
+            var allStates = workItems.Select(w => w.State).Distinct().ToList();
+            if (allStates.Any())
+            {
+                states = allStates.OrderBy(s => GetStateOrder(s)).ToArray();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load sprint data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private int GetStateOrder(string state) => state.ToLower() switch
+    {
+        "new" => 0,
+        "active" or "in progress" => 1,
+        "resolved" => 2,
+        "closed" or "done" => 3,
+        _ => 99
+    };
+
+    private int CalculateProgress()
+    {
+        if (sprintInfo?.StartDate == null || sprintInfo?.FinishDate == null)
+            return 0;
+
+        var totalDays = (sprintInfo.FinishDate.Value - sprintInfo.StartDate.Value).TotalDays;
+        var elapsedDays = (DateTime.Today - sprintInfo.StartDate.Value).TotalDays;
+
+        if (totalDays <= 0) return 100;
+        
+        var progress = (elapsedDays / totalDays) * 100;
+        return Math.Max(0, Math.Min(100, (int)progress));
+    }
+
+    private string GetWorkItemClass(string workItemType) => workItemType.ToLower() switch
+    {
+        "user story" => "card-story",
+        "bug" => "card-bug",
+        "task" => "card-task",
+        "feature" => "card-feature",
+        _ => ""
+    };
+}

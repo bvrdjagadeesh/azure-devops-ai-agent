@@ -1,0 +1,386 @@
+@page "/workitems"
+@using AzureDevOpsAgentWeb.Services
+@using Microsoft.AspNetCore.Components.Web
+@inject ConfigurationStateService ConfigService
+@inject NavigationManager Navigation
+@rendermode RenderMode.InteractiveServer
+
+<PageTitle>Work Items</PageTitle>
+
+@if (!ConfigService.IsConfigured)
+{
+    <div class="not-configured">
+        <div class="not-configured-content">
+            <h2>Configuration Required</h2>
+            <p>Please configure your Azure DevOps settings first.</p>
+            <button class="btn-primary" @onclick="GoToConfigure">Configure Settings</button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="workitems-container">
+        <div class="workitems-header">
+            <h1>Work Items</h1>
+            <div class="header-actions">
+                <button class="btn-refresh" @onclick="LoadData" disabled="@isLoading">
+                    @(isLoading ? "Loading..." : "Refresh")
+                </button>
+                <button class="btn-primary" @onclick="ShowCreateTaskModal">
+                    + Create Task
+                </button>
+            </div>
+        </div>
+
+        @if (errorMessage != null)
+        {
+            <div class="error-banner">
+                <p>@errorMessage</p>
+            </div>
+        }
+
+        <div class="filters">
+            <div class="filter-group">
+                <label>Filter by Type:</label>
+                <select @bind="filterType" @bind:after="ApplyFilters">
+                    <option value="">All Types</option>
+                    @foreach (var type in workItemTypes)
+                    {
+                        <option value="@type">@type</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Filter by State:</label>
+                <select @bind="filterState" @bind:after="ApplyFilters">
+                    <option value="">All States</option>
+                    @foreach (var state in workItemStates)
+                    {
+                        <option value="@state">@state</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Search:</label>
+                <input type="text" @bind="searchTerm" @bind:event="oninput" @bind:after="ApplyFilters" 
+                       placeholder="Search by title or ID..." />
+            </div>
+        </div>
+
+        <div class="workitems-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Type</th>
+                        <th>Title</th>
+                        <th>State</th>
+                        <th>Assigned To</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (isLoading)
+                    {
+                        <tr>
+                            <td colspan="6" class="loading-row">Loading work items...</td>
+                        </tr>
+                    }
+                    else if (!filteredWorkItems.Any())
+                    {
+                        <tr>
+                            <td colspan="6" class="empty-row">No work items found</td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var item in filteredWorkItems)
+                        {
+                            <tr>
+                                <td class="id-cell">
+                                    <span class="work-item-id">#@item.Id</span>
+                                </td>
+                                <td>
+                                    <span class="type-badge @GetTypeBadgeClass(item.WorkItemType)">
+                                        @item.WorkItemType
+                                    </span>
+                                </td>
+                                <td class="title-cell">@item.Title</td>
+                                <td>
+                                    <span class="state-badge @GetStateBadgeClass(item.State)">
+                                        @item.State
+                                    </span>
+                                </td>
+                                <td class="assignee-cell">@(item.AssignedTo ?? "Unassigned")</td>
+                                <td class="actions-cell">
+                                    <button class="btn-icon" title="View Details" @onclick="() => ViewDetails(item)">
+                                        View
+                                    </button>
+                                    <button class="btn-icon" title="Add Task" @onclick="() => ShowCreateTaskForParent(item.Id)">
+                                        +Task
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="summary-bar">
+            <span>Total: @filteredWorkItems.Count items</span>
+            @foreach (var group in filteredWorkItems.GroupBy(w => w.WorkItemType))
+            {
+                <span>| @group.Key: @group.Count()</span>
+            }
+        </div>
+    </div>
+
+    @if (showCreateModal)
+    {
+        <div class="modal-overlay" @onclick="CloseModal">
+            <div class="modal-content" @onclick:stopPropagation>
+                <h2>Create New Task</h2>
+                <div class="form-group">
+                    <label>Title *</label>
+                    <input type="text" @bind="newTaskTitle" placeholder="Enter task title" />
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea @bind="newTaskDescription" placeholder="Enter task description"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Parent Work Item (optional)</label>
+                    <select @bind="newTaskParentId">
+                        <option value="">None</option>
+                        @foreach (var item in workItems.Where(w => w.WorkItemType != "Task"))
+                        {
+                            <option value="@item.Id">#@item.Id - @item.Title</option>
+                        }
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-secondary" @onclick="CloseModal">Cancel</button>
+                    <button class="btn-primary" @onclick="CreateTask" disabled="@(string.IsNullOrWhiteSpace(newTaskTitle) || isCreating)">
+                        @(isCreating ? "Creating..." : "Create Task")
+                    </button>
+                </div>
+                @if (createMessage != null)
+                {
+                    <div class="create-message @(createSuccess ? "success" : "error")">
+                        @createMessage
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (showDetailsModal && selectedWorkItem != null)
+    {
+        <div class="modal-overlay" @onclick="CloseDetailsModal">
+            <div class="modal-content details-modal" @onclick:stopPropagation>
+                <h2>@selectedWorkItem.WorkItemType #@selectedWorkItem.Id</h2>
+                <div class="details-content">
+                    <div class="detail-row">
+                        <label>Title:</label>
+                        <span>@selectedWorkItem.Title</span>
+                    </div>
+                    <div class="detail-row">
+                        <label>State:</label>
+                        <span class="state-badge @GetStateBadgeClass(selectedWorkItem.State)">@selectedWorkItem.State</span>
+                    </div>
+                    <div class="detail-row">
+                        <label>Assigned To:</label>
+                        <span>@(selectedWorkItem.AssignedTo ?? "Unassigned")</span>
+                    </div>
+                    <div class="detail-row">
+                        <label>Iteration:</label>
+                        <span>@(selectedWorkItem.IterationPath ?? "Not set")</span>
+                    </div>
+                    @if (!string.IsNullOrEmpty(selectedWorkItem.Description))
+                    {
+                        <div class="detail-row description">
+                            <label>Description:</label>
+                            <div class="description-content">@((MarkupString)selectedWorkItem.Description)</div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-secondary" @onclick="CloseDetailsModal">Close</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<WorkItemInfo> workItems = new();
+    private List<WorkItemInfo> filteredWorkItems = new();
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    private string filterType = "";
+    private string filterState = "";
+    private string searchTerm = "";
+    private List<string> workItemTypes = new();
+    private List<string> workItemStates = new();
+
+    private bool showCreateModal = false;
+    private string newTaskTitle = "";
+    private string newTaskDescription = "";
+    private string newTaskParentId = "";
+    private bool isCreating = false;
+    private string? createMessage;
+    private bool createSuccess = false;
+
+    private bool showDetailsModal = false;
+    private WorkItemInfo? selectedWorkItem;
+
+    private AzureDevOpsService? DevOpsService => ConfigService.GetDevOpsService();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ConfigService.IsConfigured)
+        {
+            await LoadData();
+        }
+    }
+
+    private void GoToConfigure()
+    {
+        Navigation.NavigateTo("/configure");
+    }
+
+    private async Task LoadData()
+    {
+        if (DevOpsService == null) return;
+
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            workItems = await DevOpsService.GetCurrentSprintWorkItemsAsync();
+            workItemTypes = workItems.Select(w => w.WorkItemType).Distinct().OrderBy(t => t).ToList();
+            workItemStates = workItems.Select(w => w.State).Distinct().OrderBy(s => s).ToList();
+            ApplyFilters();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load work items: {ex.Message}";
+            filteredWorkItems = new();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        filteredWorkItems = workItems.Where(w =>
+            (string.IsNullOrEmpty(filterType) || w.WorkItemType == filterType) &&
+            (string.IsNullOrEmpty(filterState) || w.State == filterState) &&
+            (string.IsNullOrEmpty(searchTerm) || 
+             w.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+             w.Id.ToString().Contains(searchTerm))
+        ).ToList();
+    }
+
+    private void ShowCreateTaskModal()
+    {
+        newTaskTitle = "";
+        newTaskDescription = "";
+        newTaskParentId = "";
+        createMessage = null;
+        showCreateModal = true;
+    }
+
+    private void ShowCreateTaskForParent(int parentId)
+    {
+        newTaskTitle = "";
+        newTaskDescription = "";
+        newTaskParentId = parentId.ToString();
+        createMessage = null;
+        showCreateModal = true;
+    }
+
+    private void CloseModal()
+    {
+        showCreateModal = false;
+    }
+
+    private async Task CreateTask()
+    {
+        if (string.IsNullOrWhiteSpace(newTaskTitle) || DevOpsService == null)
+            return;
+
+        isCreating = true;
+        createMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            int? parentId = string.IsNullOrEmpty(newTaskParentId) ? null : int.Parse(newTaskParentId);
+            var newTask = await DevOpsService.CreateTaskAsync(
+                newTaskTitle, 
+                string.IsNullOrWhiteSpace(newTaskDescription) ? null : newTaskDescription,
+                parentId);
+
+            if (newTask != null)
+            {
+                createSuccess = true;
+                createMessage = $"Task #{newTask.Id} created successfully!";
+                await LoadData();
+            }
+            else
+            {
+                createSuccess = false;
+                createMessage = "Failed to create task.";
+            }
+        }
+        catch (Exception ex)
+        {
+            createSuccess = false;
+            createMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isCreating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ViewDetails(WorkItemInfo item)
+    {
+        if (DevOpsService == null) return;
+        selectedWorkItem = await DevOpsService.GetWorkItemAsync(item.Id) ?? item;
+        showDetailsModal = true;
+    }
+
+    private void CloseDetailsModal()
+    {
+        showDetailsModal = false;
+        selectedWorkItem = null;
+    }
+
+    private string GetTypeBadgeClass(string workItemType) => workItemType.ToLower() switch
+    {
+        "user story" => "type-story",
+        "bug" => "type-bug",
+        "task" => "type-task",
+        "feature" => "type-feature",
+        _ => ""
+    };
+
+    private string GetStateBadgeClass(string state) => state.ToLower() switch
+    {
+        "new" => "state-new",
+        "active" or "in progress" => "state-active",
+        "resolved" => "state-resolved",
+        "closed" or "done" => "state-closed",
+        _ => ""
+    };
+}

@@ -1,0 +1,252 @@
+@page "/chat"
+@using AzureDevOpsAgentWeb.Services
+@using Microsoft.AspNetCore.Components.Web
+@inject ConfigurationStateService ConfigService
+@inject NavigationManager Navigation
+@rendermode RenderMode.InteractiveServer
+
+<PageTitle>Azure DevOps Agent - Chat</PageTitle>
+
+@if (!ConfigService.IsConfigured)
+{
+    <div class="not-configured">
+        <div class="not-configured-content">
+            <h2>?? Configuration Required</h2>
+            <p>Please configure your Azure DevOps and Azure OpenAI settings first.</p>
+            <button class="btn-primary" @onclick="GoToConfigure">
+                ?? Configure Settings
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>Azure DevOps Sprint Assistant</h1>
+            <p>Connected to: @ConfigService.Configuration.ProjectName</p>
+            <div class="header-actions">
+                <button class="btn-clear" @onclick="ClearChat">Clear Chat</button>
+                <button class="btn-settings" @onclick="GoToConfigure">?? Settings</button>
+            </div>
+        </div>
+
+        <div class="chat-messages" @ref="chatContainer">
+            @if (messages.Count == 0)
+            {
+                <div class="welcome-message">
+                    <h3>?? Welcome to the Azure DevOps Agent!</h3>
+                    <p>I can help you with:</p>
+                    <ul>
+                        <li>?? View current sprint information</li>
+                        <li>?? List work items in the sprint</li>
+                        <li>? Create new tasks</li>
+                        <li>?? Update work item states</li>
+                    </ul>
+                    <p>Try asking:</p>
+                    <div class="suggestions">
+                        <button class="suggestion-btn" @onclick='() => SendSuggestion("Show me the current sprint info")'>
+                            Show me the current sprint info
+                        </button>
+                        <button class="suggestion-btn" @onclick='() => SendSuggestion("List all work items in this sprint")'>
+                            List all work items in this sprint
+                        </button>
+                        <button class="suggestion-btn" @onclick='() => SendSuggestion("What tasks are still in progress?")'>
+                            What tasks are still in progress?
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @foreach (var message in messages)
+            {
+                <div class="message @(message.IsUser ? "user-message" : "assistant-message")">
+                    <div class="message-avatar">
+                        @(message.IsUser ? "??" : "??")
+                    </div>
+                    <div class="message-content">
+                        <div class="message-sender">@(message.IsUser ? "You" : "Agent")</div>
+                        <div class="message-text">@((MarkupString)FormatMessage(message.Content))</div>
+                        <div class="message-time">@message.Timestamp.ToString("HH:mm")</div>
+                    </div>
+                </div>
+            }
+
+            @if (isLoading)
+            {
+                <div class="message assistant-message">
+                    <div class="message-avatar">??</div>
+                    <div class="message-content">
+                        <div class="message-sender">Agent</div>
+                        <div class="message-text typing-indicator">
+                            <span></span><span></span><span></span>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="chat-input-container">
+            <form @onsubmit="SendMessage" class="chat-form">
+                <input 
+                    type="text" 
+                    @bind="currentMessage" 
+                    @bind:event="oninput"
+                    placeholder="Ask about your sprint, work items, or create tasks..."
+                    disabled="@isLoading"
+                    class="chat-input" />
+                <button type="submit" disabled="@(isLoading || string.IsNullOrWhiteSpace(currentMessage))" class="send-btn">
+                    @if (isLoading)
+                    {
+                        <span>...</span>
+                    }
+                    else
+                    {
+                        <span>Send</span>
+                    }
+                </button>
+            </form>
+        </div>
+    </div>
+}
+
+<style>
+    .not-configured {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        min-height: 400px;
+    }
+
+    .not-configured-content {
+        text-align: center;
+        padding: 40px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    }
+
+    .not-configured-content h2 {
+        color: #f0ad4e;
+        margin-bottom: 15px;
+    }
+
+    .not-configured-content p {
+        color: #666;
+        margin-bottom: 25px;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn-settings {
+        background: transparent;
+        color: #666;
+        border: 1px solid #ddd;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .btn-settings:hover {
+        background: #f5f5f5;
+    }
+</style>
+
+@code {
+    private List<ChatMessage> messages = new();
+    private string currentMessage = string.Empty;
+    private bool isLoading = false;
+    private ElementReference chatContainer;
+
+    private ChatService? ChatService => ConfigService.GetChatService();
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isLoading || ChatService == null)
+            return;
+
+        var userMessage = currentMessage;
+        currentMessage = string.Empty;
+
+        messages.Add(new ChatMessage
+        {
+            Content = userMessage,
+            IsUser = true,
+            Timestamp = DateTime.Now
+        });
+
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var response = await ChatService.SendMessageAsync(userMessage);
+            
+            messages.Add(new ChatMessage
+            {
+                Content = response,
+                IsUser = false,
+                Timestamp = DateTime.Now
+            });
+        }
+        catch (Exception ex)
+        {
+            messages.Add(new ChatMessage
+            {
+                Content = $"Sorry, an error occurred: {ex.Message}",
+                IsUser = false,
+                Timestamp = DateTime.Now
+            });
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SendSuggestion(string suggestion)
+    {
+        currentMessage = suggestion;
+        await SendMessage();
+    }
+
+    private void ClearChat()
+    {
+        messages.Clear();
+        ChatService?.ClearHistory();
+        StateHasChanged();
+    }
+
+    private void GoToConfigure()
+    {
+        Navigation.NavigateTo("/configure");
+    }
+
+    private string FormatMessage(string content)
+    {
+        content = System.Web.HttpUtility.HtmlEncode(content);
+        content = content.Replace("\n", "<br/>");
+        content = System.Text.RegularExpressions.Regex.Replace(
+            content, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+        content = System.Text.RegularExpressions.Regex.Replace(
+            content, @"`(.+?)`", "<code>$1</code>");
+        content = System.Text.RegularExpressions.Regex.Replace(
+            content, @"^## (.+?)(<br/>|$)", "<h4>$1</h4>", 
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        return content;
+    }
+
+    private class ChatMessage
+    {
+        public string Content { get; set; } = string.Empty;
+        public bool IsUser { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+}

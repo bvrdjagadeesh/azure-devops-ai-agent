@@ -1,0 +1,68 @@
+@inherits LayoutComponentBase
+@using AzureDevOpsAgentWeb.Services
+@inject ConfigurationStateService ConfigService
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Azure DevOps Agent</title>
+</head>
+<body>
+    <div class="page">
+        @if (ConfigService.IsConfigured)
+        {
+            <nav class="sidebar">
+                <div class="sidebar-header">
+                    <h2>DevOps Agent</h2>
+                </div>
+                <div class="sidebar-nav">
+                    <NavLink class="nav-link" href="chat" Match="NavLinkMatch.All">
+                        <span>Chat</span>
+                    </NavLink>
+                    <NavLink class="nav-link" href="sprint">
+                        <span>Sprint Board</span>
+                    </NavLink>
+                    <NavLink class="nav-link" href="workitems">
+                        <span>Work Items</span>
+                    </NavLink>
+                    <NavLink class="nav-link" href="configure">
+                        <span>Settings</span>
+                    </NavLink>
+                </div>
+                <div class="sidebar-footer">
+                    <div class="connection-info">
+                        <small>@ConfigService.Configuration.ProjectName</small>
+                    </div>
+                </div>
+            </nav>
+        }
+        <main class="@(ConfigService.IsConfigured ? "main-content" : "main-content-full")">
+            @Body
+        </main>
+    </div>
+
+    <style>
+        .main-content-full {
+            width: 100%;
+            min-height: 100vh;
+        }
+
+        .sidebar-footer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 15px 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .connection-info {
+            font-size: 12px;
+            word-break: break-all;
+        }
+    </style>
+</body>
+</html>
